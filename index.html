@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shiden Cards</title>
+<!-- アイコン: 共通バッジ（docs/SHIDEN_ICON_GUIDE.md。閲覧専用ページなので PWA 化はしない） -->
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<meta name="theme-color" content="#09060f">
+<style>
+  /* ================================================================
+     Shiden Cards — 名刺一覧（閲覧専用）
+     Shiden Dashboard と同じダーク×紫テーマ。
+     実データは Hayahide-Log（非公開）から実行時に読む。HTML は何も持たない。
+     ================================================================ */
+  :root {
+    --page:        #0c0a11;
+    --surface:     #16131d;
+    --surface-2:   #1d1926;
+    --ink:         #f2f0f7;
+    --ink-2:       #b8b3c7;
+    --muted:       #7d7890;
+    --border:      rgba(158,140,255,0.14);
+    --accent:      #9085e9;
+    --accent-hi:   #b5aaff;
+    --accent-soft: rgba(144,133,233,0.12);
+    --good:        #34c85a;
+    --warn:        #e6a040;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    background:
+      radial-gradient(1000px 500px at 80% -10%, rgba(120,90,240,0.16), transparent 60%),
+      radial-gradient(800px 400px at -10% 20%, rgba(90,60,200,0.10), transparent 60%),
+      var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    line-height: 1.6;
+    padding: 28px 16px 64px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand img { width: 32px; height: 32px; }
+  .brand h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+  .brand .sub { color: var(--muted); font-size: 12px; }
+  .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .status { color: var(--muted); font-size: 12px; }
+  button, select, input {
+    font: inherit; color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0c0a11; font-weight: 600; border-color: transparent; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  /* 設定パネル */
+  .panel { display: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 18px; }
+  .panel.open { display: block; }
+  .panel h2 { font-size: 14px; margin-bottom: 10px; color: var(--ink-2); }
+  .panel .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .panel .row input { width: 100%; }
+  .panel .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .panel .actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  /* フィルタ列 */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .filters input[type=search] { flex: 1 1 220px; min-width: 180px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--ink-2); cursor: pointer;
+  }
+  .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hi); }
+  .count { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+  /* カード */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; cursor: pointer; transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .thumb { aspect-ratio: 1.65; background: var(--surface-2); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; overflow: hidden; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .body { padding: 10px 12px 12px; }
+  .company { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .name { font-size: 15px; font-weight: 700; color: var(--accent-hi); margin: 2px 0 6px; line-height: 1.35; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .tag.folder { border-color: rgba(52,200,90,0.35); color: #7fe09a; }
+  .date { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .section-title { font-size: 13px; color: var(--ink-2); font-weight: 600; margin: 18px 0 8px; }
+
+  /* 拡大表示 */
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10; align-items: center; justify-content: center; padding: 20px; }
+  .modal.open { display: flex; }
+  .modal .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; max-width: 960px; width: 100%; max-height: 95vh; overflow: auto; }
+  .modal img { width: 100%; display: block; background: #fff; }
+  .modal .meta { padding: 12px 16px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .modal .meta .name { font-size: 18px; margin: 0; }
+  .modal .meta .close { margin-left: auto; }
+  .modal .file { font-size: 12px; color: var(--muted); word-break: break-all; }
+
+  @media (max-width: 480px) {
+    body { padding: 16px 12px 48px; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <div>
+        <h1>Shiden Cards</h1>
+        <div class="sub">名刺一覧（ScanSnap → Google Drive → Hayahide-Log）</div>
+      </div>
+    </div>
+    <div class="tools">
+      <span class="status" id="status">未設定</span>
+      <button id="btn-sync">再読込</button>
+      <button id="btn-config">読込設定</button>
+    </div>
+  </header>
+
+  <section class="panel" id="cfg-panel">
+    <h2>GitHub 読込設定（この端末のブラウザにだけ保存されます）</h2>
+    <div class="row"><label>owner</label><input id="cfg-owner" placeholder="hayahide-cloud"></div>
+    <div class="row"><label>repo</label><input id="cfg-repo" placeholder="Hayahide-Log"></div>
+    <div class="row"><label>branch</label><input id="cfg-branch" placeholder="main"></div>
+    <div class="row"><label>フォルダ</label><input id="cfg-dir" placeholder="cards"></div>
+    <div class="row"><label>token</label><input id="cfg-token" type="password" placeholder="github_pat_…（Contents: Read のみで可）"></div>
+    <div class="note">Fine-grained token は Hayahide-Log の Contents「読み取り」だけで動きます。共有 PC では使い終わったら「設定を削除」を押してください。</div>
+    <div class="actions">
+      <button class="primary" id="cfg-save">保存して読込</button>
+      <button id="cfg-clear">設定を削除</button>
+    </div>
+  </section>
+
+  <div class="filters">
+    <input type="search" id="q" placeholder="会社名・氏名で検索">
+    <select id="sort">
+      <option value="new">新しい順</option>
+      <option value="old">古い順</option>
+      <option value="company">会社名順</option>
+      <option value="name">氏名順</option>
+    </select>
+    <div class="chips" id="folder-chips"></div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="section-title" id="list-title">名刺</div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none"></div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <img id="modal-img" alt="">
+    <div class="meta">
+      <div>
+        <div class="company" id="modal-company"></div>
+        <div class="name" id="modal-name"></div>
+        <div class="file" id="modal-file"></div>
+      </div>
+      <button class="close" id="modal-close">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  /* ============================================================
+     GitHub Contents API で Hayahide-Log の cards/cards.json と
+     cards/thumbs/*.jpg を読む。表示専用で書き込みはしない。
+     設定は localStorage（shiden_cards_gh_cfg）のみ。
+     ============================================================ */
+  const CFG_KEY = "shiden_cards_gh_cfg";
+  const $ = id => document.getElementById(id);
+
+  function getCfg() { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch (e) { return {}; } }
+  function setCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+  function cfgOk(c) { return c && c.owner && c.repo && c.token; }
+  function setStatus(msg) { $("status").textContent = msg; }
+  function hhmm() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+
+  function apiUrl(c, path) {
+    const dir = (c.dir || "cards").replace(/^\/+|\/+$/g, "");
+    const p = (dir ? dir + "/" : "") + path;
+    return `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${p.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(c.branch || "main")}`;
+  }
+  // 画像は raw で受け取る（base64 を自前で戻すより軽く、1MB 超でも動く）
+  async function fetchBlob(c, path) {
+    const r = await fetch(apiUrl(c, path), { headers: { Authorization: "Bearer " + c.token, Accept: "application/vnd.github.raw+json" } });
+    if (!r.ok) throw new Error("GET " + path + " " + r.status);
+    return r.blob();
+  }
+  async function fetchJson(c, path) {
+    const b = await fetchBlob(c, path);
+    return JSON.parse(await b.text());
+  }
+
+  // ---- 状態 ----
+  let cards = [];          // cards.json の cards
+  let folder = "";         // 選択中フォルダ（空=すべて）
+  const blobUrls = new Map(); // thumb path -> object URL（同じ画像を 2 回取らない）
+
+  // ---- サムネイルの遅延読み込み（見えたカードだけ API を叩く）----
+  const observer = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      observer.unobserve(e.target);
+      loadThumb(e.target);
+    }
+  }, { rootMargin: "300px" });
+
+  async function thumbUrl(path) {
+    if (blobUrls.has(path)) return blobUrls.get(path);
+    const url = URL.createObjectURL(await fetchBlob(getCfg(), path));
+    blobUrls.set(path, url);
+    return url;
+  }
+  async function loadThumb(el) {
+    const path = el.dataset.thumb;
+    if (!path) return;
+    try {
+      const url = await thumbUrl(path);
+      const img = document.createElement("img");
+      img.src = url; img.alt = "";
+      el.textContent = ""; el.appendChild(img);
+    } catch (e) {
+      el.textContent = "画像なし";
+    }
+  }
+
+  // ---- 表示 ----
+  function esc(s) { return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
+  function fmtDate(iso) { return (iso || "").slice(0, 10).replace(/-/g, "/"); }
+
+  function visibleCards() {
+    const q = $("q").value.trim().toLowerCase();
+    let list = cards.filter(c => (!folder || c.folder === folder) &&
+      (!q || (c.company + " " + c.name + " " + c.file).toLowerCase().includes(q)));
+    const sort = $("sort").value;
+    const cmp = {
+      new: (a, b) => (b.mtime || "").localeCompare(a.mtime || ""),
+      old: (a, b) => (a.mtime || "").localeCompare(b.mtime || ""),
+      company: (a, b) => (a.company || "").localeCompare(b.company || "", "ja") || (a.name || "").localeCompare(b.name || "", "ja"),
+      name: (a, b) => (a.name || "").localeCompare(b.name || "", "ja"),
+    }[sort];
+    return list.sort(cmp);
+  }
+
+  function renderChips() {
+    const folders = [...new Set(cards.map(c => c.folder || ""))].sort((a, b) => a.localeCompare(b, "ja"));
+    const box = $("folder-chips");
+    box.innerHTML = "";
+    const mk = (label, value) => {
+      const b = document.createElement("button");
+      b.className = "chip" + (folder === value ? " on" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => { folder = value; render(); });
+      box.appendChild(b);
+    };
+    mk("すべて", "");
+    for (const f of folders) mk(f || "（ルート）", f);
+  }
+
+  function render() {
+    renderChips();
+    const list = visibleCards();
+    const grid = $("grid");
+    grid.innerHTML = "";
+    $("count").textContent = `${list.length} / ${cards.length} 件`;
+    $("empty").style.display = list.length ? "none" : "block";
+    $("empty").textContent = cards.length ? "該当する名刺がありません" : "名刺がまだ読み込まれていません";
+    for (const c of list) {
+      const el = document.createElement("div");
+      el.className = "card";
+      el.innerHTML = `
+        <div class="thumb" data-thumb="${esc(c.thumb || "")}">${c.thumb ? "読込中…" : "サムネイルなし"}</div>
+        <div class="body">
+          <div class="company">${esc(c.company || "（会社名なし）")}</div>
+          <div class="name">${esc(c.name)}</div>
+          <div class="tags">${c.folder ? `<span class="tag folder">${esc(c.folder)}</span>` : ""}<span class="tag">${esc((c.ext || "").toUpperCase())}</span></div>
+          <div class="date">${fmtDate(c.mtime)}</div>
+        </div>`;
+      el.addEventListener("click", () => openModal(c));
+      grid.appendChild(el);
+      observer.observe(el.querySelector(".thumb"));
+    }
+  }
+
+  async function openModal(c) {
+    $("modal-company").textContent = c.company || "";
+    $("modal-name").textContent = c.name || "";
+    $("modal-file").textContent = (c.folder ? c.folder + "/" : "") + c.file;
+    const img = $("modal-img");
+    img.removeAttribute("src");
+    $("modal").classList.add("open");
+    if (c.thumb) { try { img.src = await thumbUrl(c.thumb); } catch (e) { /* 画像なしのまま */ } }
+  }
+  $("modal-close").addEventListener("click", () => $("modal").classList.remove("open"));
+  $("modal").addEventListener("click", e => { if (e.target === $("modal")) $("modal").classList.remove("open"); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("modal").classList.remove("open"); });
+
+  // ---- 読込 ----
+  let syncing = false;
+  async function sync() {
+    const c = getCfg();
+    if (!cfgOk(c)) { setStatus("未設定（読込設定を入力してください）"); return; }
+    if (syncing) return;
+    syncing = true; setStatus("読込中…");
+    try {
+      const data = await fetchJson(c, "cards.json");
+      cards = Array.isArray(data.cards) ? data.cards : [];
+      $("list-title").textContent = `名刺（更新 ${fmtDate(data.generated_at)}）`;
+      render();
+      setStatus("更新 " + hhmm());
+    } catch (e) {
+      setStatus("読込失敗: " + e.message);
+    } finally { syncing = false; }
+  }
+
+  // ---- 設定パネル ----
+  function fillCfg() {
+    const c = getCfg();
+    $("cfg-owner").value = c.owner || "hayahide-cloud";
+    $("cfg-repo").value = c.repo || "Hayahide-Log";
+    $("cfg-branch").value = c.branch || "main";
+    $("cfg-dir").value = c.dir || "cards";
+    $("cfg-token").value = c.token || "";
+  }
+  $("btn-config").addEventListener("click", () => { fillCfg(); $("cfg-panel").classList.toggle("open"); });
+  $("cfg-save").addEventListener("click", () => {
+    setCfg({
+      owner: $("cfg-owner").value.trim(),
+      repo: $("cfg-repo").value.trim(),
+      branch: $("cfg-branch").value.trim() || "main",
+      dir: $("cfg-dir").value.trim() || "cards",
+      token: $("cfg-token").value.trim(),
+    });
+    $("cfg-panel").classList.remove("open");
+    sync();
+  });
+  $("cfg-clear").addEventListener("click", () => {
+    localStorage.removeItem(CFG_KEY); fillCfg();
+    cards = []; render(); setStatus("設定を削除しました");
+  });
+  $("btn-sync").addEventListener("click", sync);
+  $("q").addEventListener("input", render);
+  $("sort").addEventListener("change", render);
+
+  render();
+  if (cfgOk(getCfg())) sync();
+  else { setStatus("未設定（読込設定を入力してください）"); fillCfg(); $("cfg-panel").classList.add("open"); }
+})();
+</script>
+</body>
+</html>
