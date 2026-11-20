@@ -102,7 +102,8 @@
   .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10; align-items: center; justify-content: center; padding: 20px; }
   .modal.open { display: flex; }
   .modal .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; max-width: 960px; width: 100%; max-height: 95vh; overflow: auto; }
-  .modal img { width: 100%; display: block; background: #fff; }
+  /* 画像は高さを抑えて、下の編集フォームがスクロールなしで見えるようにする */
+  .modal img { width: 100%; max-height: 42vh; object-fit: contain; display: block; background: #fff; }
   .modal .meta { padding: 12px 16px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   .modal .meta .name { font-size: 18px; margin: 0; }
   .modal .meta .close { margin-left: auto; }
@@ -112,6 +113,22 @@
     body { padding: 16px 12px 48px; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   }
+
+  /* 編集フォーム（拡大表示の下） */
+  .form { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-2); }
+  .form label.wide { grid-column: 1 / -1; }
+  .form input, .form textarea { width: 100%; }
+  .form textarea { min-height: 64px; resize: vertical; font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .form .hint { font-size: 11px; color: var(--muted); }
+  .form-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .form-actions .msg { font-size: 12px; color: var(--muted); }
+  .form-actions .msg.err { color: #ff8a8a; }
+  .tag.edited { border-color: rgba(230,160,64,0.45); color: var(--warn); }
+  .tag.user { border-color: rgba(144,133,233,0.45); color: var(--accent-hi); }
+  .title-line { font-size: 12px; color: var(--ink-2); margin: -4px 0 6px; line-height: 1.4; }
+  .notice { font-size: 12px; color: var(--warn); margin-bottom: 10px; }
+  @media (max-width: 480px) { .form { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -127,6 +144,7 @@
     <div class="tools">
       <span class="status" id="status">未設定</span>
       <button id="btn-sync">再読込</button>
+      <button id="btn-csv">CSV出力</button>
       <button id="btn-config">読込設定</button>
     </div>
   </header>
@@ -137,22 +155,25 @@
     <div class="row"><label>repo</label><input id="cfg-repo" placeholder="Hayahide-Log"></div>
     <div class="row"><label>branch</label><input id="cfg-branch" placeholder="main"></div>
     <div class="row"><label>フォルダ</label><input id="cfg-dir" placeholder="cards"></div>
-    <div class="row"><label>token</label><input id="cfg-token" type="password" placeholder="github_pat_…（Contents: Read のみで可）"></div>
-    <div class="note">Fine-grained token は Hayahide-Log の Contents「読み取り」だけで動きます。共有 PC では使い終わったら「設定を削除」を押してください。</div>
+    <div class="row"><label>token</label><input id="cfg-token" type="password" placeholder="github_pat_…"></div>
+    <div class="note">閲覧だけなら Hayahide-Log の Contents「Read-only」で動きます。名刺の項目を編集して保存するには Contents「Read and write」が必要です。共有 PC では使い終わったら「設定を削除」を押してください。</div>
     <div class="actions">
       <button class="primary" id="cfg-save">保存して読込</button>
       <button id="cfg-clear">設定を削除</button>
     </div>
   </section>
 
+  <div class="notice" id="notice" style="display:none"></div>
+
   <div class="filters">
-    <input type="search" id="q" placeholder="会社名・氏名で検索">
+    <input type="search" id="q" placeholder="会社名・氏名・部署・役職・メール・タグ・メモで検索">
     <select id="sort">
       <option value="new">新しい順</option>
       <option value="old">古い順</option>
       <option value="company">会社名順</option>
       <option value="name">氏名順</option>
     </select>
+    <select id="tag-filter"><option value="">すべてのタグ</option></select>
     <div class="chips" id="folder-chips"></div>
     <span class="count" id="count"></span>
   </div>
@@ -173,17 +194,39 @@
       </div>
       <button class="close" id="modal-close">閉じる</button>
     </div>
+    <form class="form" id="edit-form" autocomplete="off">
+      <label>会社名<input name="company"></label>
+      <label>氏名<input name="name"></label>
+      <label>部署<input name="dept"></label>
+      <label>役職<input name="title"></label>
+      <label>電話<input name="phone" inputmode="tel"></label>
+      <label>メール<input name="email" inputmode="email"></label>
+      <label class="wide">住所<input name="address"></label>
+      <label class="wide">タグ<input name="tags" placeholder="例: 取引先, 2026展示会"><span class="hint">カンマ区切り</span></label>
+      <label class="wide">メモ<textarea name="memo"></textarea></label>
+      <div class="form-actions">
+        <button type="submit" class="primary" id="edit-save">保存</button>
+        <span class="msg" id="edit-msg">会社名・氏名を空にすると、ファイル名から読んだ値に戻ります</span>
+      </div>
+    </form>
   </div>
 </div>
 
 <script>
 (() => {
   /* ============================================================
-     GitHub Contents API で Hayahide-Log の cards/cards.json と
-     cards/thumbs/*.jpg を読む。表示専用で書き込みはしない。
-     設定は localStorage（shiden_cards_gh_cfg）のみ。
+     データの置き場（Hayahide-Log の cards/）
+       cards.json  … PC の scan_cards.py が毎回作り直す一覧（このページは書かない）
+       thumbs/     … サムネイル
+       edits.json  … このページで手入力した項目（id ごと）。scan_cards.py は触らない
+     表示は「cards.json の値の上に edits.json の値を重ねる」。
+     保存は GitHub Contents API の PUT。競合（409）は最新を取り直して
+     id ごとに updated_at が新しい方を残し、最大 5 回まで再試行する。
+     送れなかった編集は localStorage（shiden_cards_pending）に残し、次の読込で再送する。
      ============================================================ */
   const CFG_KEY = "shiden_cards_gh_cfg";
+  const PENDING_KEY = "shiden_cards_pending";
+  const EDIT_FIELDS = ["company", "name", "dept", "title", "phone", "email", "address", "tags", "memo"];
   const $ = id => document.getElementById(id);
 
   function getCfg() { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch (e) { return {}; } }
@@ -192,36 +235,86 @@
   function setStatus(msg) { $("status").textContent = msg; }
   function hhmm() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 
-  function apiUrl(c, path) {
+  // UTF-8 と base64 の相互変換（日本語を含む JSON を Contents API で読み書きするため）
+  function b64enc(str) { const bytes = new TextEncoder().encode(str); let bin = ""; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin); }
+  function b64dec(b64) { const bin = atob((b64 || "").replace(/\n/g, "")); const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0)); return new TextDecoder().decode(bytes); }
+
+  function filePath(c, path) {
     const dir = (c.dir || "cards").replace(/^\/+|\/+$/g, "");
-    const p = (dir ? dir + "/" : "") + path;
-    return `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${p.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(c.branch || "main")}`;
+    return (dir ? dir + "/" : "") + path;
   }
-  // 画像は raw で受け取る（base64 を自前で戻すより軽く、1MB 超でも動く）
+  function apiUrl(c, path, withRef = true) {
+    const p = filePath(c, path).split("/").map(encodeURIComponent).join("/");
+    const base = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${p}`;
+    return withRef ? `${base}?ref=${encodeURIComponent(c.branch || "main")}` : base;
+  }
+  function authHeaders(c, accept) { return { Authorization: "Bearer " + c.token, Accept: accept || "application/vnd.github+json" }; }
+  function ghErr(op, code) {
+    const hint = {
+      401: "トークンが無効か期限切れ",
+      403: op === "PUT" ? "書き込み権限がありません（Contents を Read and write に）" : "権限不足",
+      404: op === "PUT" ? "書き込み権限がありません（Repository access に Hayahide-Log を含め、Contents を Read and write に）" : "リポジトリ名・フォルダ名かトークンの対象リポジトリを確認",
+      409: "競合（自動で再試行します）",
+      422: "リクエスト不正（ブランチ名を確認）",
+    }[code];
+    return op + " " + code + (hint ? "：" + hint : "");
+  }
+
+  // 画像・cards.json は raw で受け取る（base64 を自前で戻すより軽く、1MB 超でも動く）
   async function fetchBlob(c, path) {
-    const r = await fetch(apiUrl(c, path), { headers: { Authorization: "Bearer " + c.token, Accept: "application/vnd.github.raw+json" } });
-    if (!r.ok) throw new Error("GET " + path + " " + r.status);
+    const r = await fetch(apiUrl(c, path), { headers: authHeaders(c, "application/vnd.github.raw+json") });
+    if (!r.ok) throw new Error(ghErr("GET", r.status));
     return r.blob();
   }
-  async function fetchJson(c, path) {
-    const b = await fetchBlob(c, path);
-    return JSON.parse(await b.text());
+  async function fetchJson(c, path) { return JSON.parse(await (await fetchBlob(c, path)).text()); }
+
+  // edits.json は sha も要るので JSON 形式で取る。古い sha だと PUT が 409 になるため常に最新を取る
+  async function getEdits(c) {
+    const r = await fetch(apiUrl(c, "edits.json") + "&t=" + Date.now(), { cache: "no-store", headers: authHeaders(c) });
+    if (r.status === 404) return { data: { version: 1, edits: {} }, sha: null };
+    if (!r.ok) throw new Error(ghErr("GET", r.status));
+    const j = await r.json();
+    const data = JSON.parse(b64dec(j.content));
+    if (!data.edits) data.edits = {};
+    return { data, sha: j.sha };
+  }
+  async function putEdits(c, data, sha) {
+    const body = { message: "cards edits " + new Date().toISOString(), content: b64enc(JSON.stringify(data, null, 1)), branch: c.branch || "main" };
+    if (sha) body.sha = sha;
+    const r = await fetch(apiUrl(c, "edits.json", false), { method: "PUT", headers: { ...authHeaders(c), "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(ghErr("PUT", r.status));
+    return (await r.json()).content.sha;
   }
 
   // ---- 状態 ----
   let cards = [];          // cards.json の cards
+  let edits = {};          // edits.json の edits（id -> 手入力の項目）
   let folder = "";         // 選択中フォルダ（空=すべて）
-  const blobUrls = new Map(); // thumb path -> object URL（同じ画像を 2 回取らない）
+  let current = null;      // 拡大表示中のカード id
+  const blobUrls = new Map();
+
+  function getPending() { try { return JSON.parse(localStorage.getItem(PENDING_KEY)) || {}; } catch (e) { return {}; } }
+  function setPending(p) { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); }
+
+  // 表示用: ファイル名から読んだ値の上に手入力を重ねる（送信待ちの編集が最優先）
+  function editOf(id) { return getPending()[id] || edits[id] || null; }
+  function view(c) {
+    const e = editOf(c.id) || {};
+    return {
+      ...c,
+      company: e.company || c.company || "",
+      name: e.name || c.name || "",
+      dept: e.dept || "", title: e.title || "", phone: e.phone || "", email: e.email || "",
+      address: e.address || "", memo: e.memo || "",
+      tags: Array.isArray(e.tags) ? e.tags : [],
+      edited: !!editOf(c.id),
+    };
+  }
 
   // ---- サムネイルの遅延読み込み（見えたカードだけ API を叩く）----
   const observer = new IntersectionObserver(entries => {
-    for (const e of entries) {
-      if (!e.isIntersecting) continue;
-      observer.unobserve(e.target);
-      loadThumb(e.target);
-    }
+    for (const e of entries) { if (!e.isIntersecting) continue; observer.unobserve(e.target); loadThumb(e.target); }
   }, { rootMargin: "300px" });
-
   async function thumbUrl(path) {
     if (blobUrls.has(path)) return blobUrls.get(path);
     const url = URL.createObjectURL(await fetchBlob(getCfg(), path));
@@ -231,14 +324,8 @@
   async function loadThumb(el) {
     const path = el.dataset.thumb;
     if (!path) return;
-    try {
-      const url = await thumbUrl(path);
-      const img = document.createElement("img");
-      img.src = url; img.alt = "";
-      el.textContent = ""; el.appendChild(img);
-    } catch (e) {
-      el.textContent = "画像なし";
-    }
+    try { const img = document.createElement("img"); img.src = await thumbUrl(path); img.alt = ""; el.textContent = ""; el.appendChild(img); }
+    catch (e) { el.textContent = "画像なし"; }
   }
 
   // ---- 表示 ----
@@ -247,15 +334,15 @@
 
   function visibleCards() {
     const q = $("q").value.trim().toLowerCase();
-    let list = cards.filter(c => (!folder || c.folder === folder) &&
-      (!q || (c.company + " " + c.name + " " + c.file).toLowerCase().includes(q)));
-    const sort = $("sort").value;
+    const tag = $("tag-filter").value;
+    let list = cards.map(view).filter(v => (!folder || v.folder === folder) && (!tag || v.tags.includes(tag)) &&
+      (!q || [v.company, v.name, v.dept, v.title, v.phone, v.email, v.address, v.memo, v.tags.join(" "), v.file].join(" ").toLowerCase().includes(q)));
     const cmp = {
       new: (a, b) => (b.mtime || "").localeCompare(a.mtime || ""),
       old: (a, b) => (a.mtime || "").localeCompare(b.mtime || ""),
-      company: (a, b) => (a.company || "").localeCompare(b.company || "", "ja") || (a.name || "").localeCompare(b.name || "", "ja"),
-      name: (a, b) => (a.name || "").localeCompare(b.name || "", "ja"),
-    }[sort];
+      company: (a, b) => a.company.localeCompare(b.company, "ja") || a.name.localeCompare(b.name, "ja"),
+      name: (a, b) => a.name.localeCompare(b.name, "ja"),
+    }[$("sort").value];
     return list.sort(cmp);
   }
 
@@ -273,44 +360,164 @@
     mk("すべて", "");
     for (const f of folders) mk(f || "（ルート）", f);
   }
+  function renderTagFilter() {
+    const sel = $("tag-filter"), keep = sel.value;
+    const tags = [...new Set(cards.flatMap(c => view(c).tags))].sort((a, b) => a.localeCompare(b, "ja"));
+    sel.innerHTML = '<option value="">すべてのタグ</option>' + tags.map(t => `<option>${esc(t)}</option>`).join("");
+    sel.value = tags.includes(keep) ? keep : "";
+  }
+  function renderNotice() {
+    const ids = new Set(cards.map(c => c.id));
+    const orphan = Object.keys(edits).filter(id => !ids.has(id)).length;
+    const pending = Object.keys(getPending()).length;
+    const msgs = [];
+    if (pending) msgs.push(`未送信の編集が ${pending} 件あります（再読込で再送します）`);
+    if (orphan && cards.length) msgs.push(`元の名刺ファイルが見つからない編集が ${orphan} 件あります（ファイル名を変えると編集が外れます）`);
+    $("notice").textContent = msgs.join("　/　");
+    $("notice").style.display = msgs.length ? "block" : "none";
+  }
 
   function render() {
-    renderChips();
+    renderChips(); renderTagFilter(); renderNotice();
     const list = visibleCards();
     const grid = $("grid");
     grid.innerHTML = "";
     $("count").textContent = `${list.length} / ${cards.length} 件`;
     $("empty").style.display = list.length ? "none" : "block";
     $("empty").textContent = cards.length ? "該当する名刺がありません" : "名刺がまだ読み込まれていません";
-    for (const c of list) {
+    for (const v of list) {
       const el = document.createElement("div");
       el.className = "card";
+      const sub = [v.dept, v.title].filter(Boolean).join(" ");
       el.innerHTML = `
-        <div class="thumb" data-thumb="${esc(c.thumb || "")}">${c.thumb ? "読込中…" : "サムネイルなし"}</div>
+        <div class="thumb" data-thumb="${esc(v.thumb || "")}">${v.thumb ? "読込中…" : "サムネイルなし"}</div>
         <div class="body">
-          <div class="company">${esc(c.company || "（会社名なし）")}</div>
-          <div class="name">${esc(c.name)}</div>
-          <div class="tags">${c.folder ? `<span class="tag folder">${esc(c.folder)}</span>` : ""}<span class="tag">${esc((c.ext || "").toUpperCase())}</span></div>
-          <div class="date">${fmtDate(c.mtime)}</div>
+          <div class="company">${esc(v.company || "（会社名なし）")}</div>
+          <div class="name">${esc(v.name)}</div>
+          ${sub ? `<div class="title-line">${esc(sub)}</div>` : ""}
+          <div class="tags">
+            ${v.folder ? `<span class="tag folder">${esc(v.folder)}</span>` : ""}
+            ${v.tags.map(t => `<span class="tag user">${esc(t)}</span>`).join("")}
+            ${v.edited ? '<span class="tag edited">編集済</span>' : ""}
+          </div>
+          <div class="date">${fmtDate(v.mtime)}</div>
         </div>`;
-      el.addEventListener("click", () => openModal(c));
+      el.addEventListener("click", () => openModal(v.id));
       grid.appendChild(el);
       observer.observe(el.querySelector(".thumb"));
     }
   }
 
-  async function openModal(c) {
-    $("modal-company").textContent = c.company || "";
-    $("modal-name").textContent = c.name || "";
+  // ---- 拡大表示と編集 ----
+  async function openModal(id) {
+    const c = cards.find(x => x.id === id);
+    if (!c) return;
+    current = id;
+    const v = view(c);
+    $("modal-company").textContent = v.company;
+    $("modal-name").textContent = v.name;
     $("modal-file").textContent = (c.folder ? c.folder + "/" : "") + c.file;
+    const f = $("edit-form");
+    for (const k of EDIT_FIELDS) f.elements[k].value = k === "tags" ? v.tags.join(", ") : v[k];
+    setMsg("会社名・氏名を空にすると、ファイル名から読んだ値に戻ります");
     const img = $("modal-img");
     img.removeAttribute("src");
     $("modal").classList.add("open");
     if (c.thumb) { try { img.src = await thumbUrl(c.thumb); } catch (e) { /* 画像なしのまま */ } }
   }
-  $("modal-close").addEventListener("click", () => $("modal").classList.remove("open"));
-  $("modal").addEventListener("click", e => { if (e.target === $("modal")) $("modal").classList.remove("open"); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") $("modal").classList.remove("open"); });
+  function closeModal() { $("modal").classList.remove("open"); current = null; }
+  function setMsg(text, err) { const m = $("edit-msg"); m.textContent = text; m.className = "msg" + (err ? " err" : ""); }
+
+  // フォームの値から edits.json に入れる 1 件を作る。ファイル名から読んだ値と同じ・空の項目は保存しない
+  function recordFromForm(c) {
+    const f = $("edit-form"), rec = {};
+    for (const k of EDIT_FIELDS) {
+      const raw = f.elements[k].value.trim();
+      if (k === "tags") { const t = [...new Set(raw.split(/[,、，]/).map(s => s.trim()).filter(Boolean))]; if (t.length) rec.tags = t; continue; }
+      if (!raw) continue;
+      if ((k === "company" || k === "name") && raw === (c[k] || "")) continue;
+      rec[k] = raw;
+    }
+    rec.updated_at = new Date().toISOString();
+    return rec;
+  }
+
+  $("edit-form").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const c = cards.find(x => x.id === current);
+    if (!c) return;
+    const rec = recordFromForm(c);
+    const empty = Object.keys(rec).length === 1; // updated_at だけ＝手入力なし
+    const pending = getPending();
+    // 手入力を全部消したときは「削除」として送る（edits.json から id ごと消す）
+    pending[c.id] = empty ? { _deleted: true, updated_at: rec.updated_at } : rec;
+    setPending(pending);
+    render();
+    setMsg("保存中…");
+    try { await flushPending(); setMsg("保存しました " + hhmm()); setStatus("保存 " + hhmm()); }
+    catch (e) { setMsg("保存できませんでした: " + e.message + "（この端末に残して次回再送します）", true); }
+    const v = view(c);
+    $("modal-company").textContent = v.company;
+    $("modal-name").textContent = v.name;
+    render();
+  });
+
+  // 送信待ちの編集を edits.json に書き込む。最新を取り直して id ごとに新しい方を残す
+  let flushing = false;
+  async function flushPending() {
+    const c = getCfg();
+    if (!cfgOk(c) || flushing) return;
+    let pending = getPending();
+    if (!Object.keys(pending).length) return;
+    flushing = true;
+    try {
+      let lastErr;
+      for (let i = 0; i < 5; i++) {
+        try {
+          const remote = await getEdits(c);
+          const merged = remote.data;
+          merged.version = 1;
+          for (const [id, rec] of Object.entries(pending)) {
+            const cur = merged.edits[id];
+            if (cur && (cur.updated_at || "") > (rec.updated_at || "")) continue; // 他端末の方が新しい
+            if (rec._deleted) delete merged.edits[id]; else merged.edits[id] = rec;
+          }
+          merged.updated_at = new Date().toISOString();
+          await putEdits(c, merged, remote.sha);
+          edits = merged.edits;
+          // 送信中に増えた編集は残す
+          const now = getPending();
+          for (const id of Object.keys(pending)) if (now[id] && now[id].updated_at === pending[id].updated_at) delete now[id];
+          setPending(now);
+          return;
+        } catch (e) {
+          lastErr = e;
+          if (!/\b409\b/.test(e.message)) throw e;
+          pending = getPending();
+        }
+      }
+      throw lastErr;
+    } finally { flushing = false; renderNotice(); }
+  }
+
+  $("modal-close").addEventListener("click", closeModal);
+  $("modal").addEventListener("click", e => { if (e.target === $("modal")) closeModal(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+  // ---- CSV 出力（Excel で開けるよう BOM 付き UTF-8）----
+  function csvCell(v) { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  $("btn-csv").addEventListener("click", () => {
+    if (!cards.length) { setStatus("名刺が読み込まれていません"); return; }
+    const head = ["会社名", "氏名", "部署", "役職", "電話", "メール", "住所", "タグ", "メモ", "フォルダ", "ファイル名", "取込日"];
+    const rows = visibleCards().map(v => [v.company, v.name, v.dept, v.title, v.phone, v.email, v.address, v.tags.join(" / "), v.memo, v.folder, v.file, fmtDate(v.mtime)]);
+    const csv = "\ufeff" + [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const d = new Date();
+    a.download = `shiden-cards-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setStatus(`CSV 出力 ${rows.length} 件`);
+  });
 
   // ---- 読込 ----
   let syncing = false;
@@ -320,11 +527,16 @@
     if (syncing) return;
     syncing = true; setStatus("読込中…");
     try {
-      const data = await fetchJson(c, "cards.json");
+      const [data, ed] = await Promise.all([fetchJson(c, "cards.json"), getEdits(c)]);
       cards = Array.isArray(data.cards) ? data.cards : [];
+      edits = ed.data.edits;
       $("list-title").textContent = `名刺（更新 ${fmtDate(data.generated_at)}）`;
       render();
       setStatus("更新 " + hhmm());
+      if (Object.keys(getPending()).length) {
+        try { await flushPending(); setStatus("更新・再送 " + hhmm()); render(); }
+        catch (e) { setStatus("再送失敗: " + e.message); }
+      }
     } catch (e) {
       setStatus("読込失敗: " + e.message);
     } finally { syncing = false; }
@@ -352,12 +564,15 @@
     sync();
   });
   $("cfg-clear").addEventListener("click", () => {
-    localStorage.removeItem(CFG_KEY); fillCfg();
-    cards = []; render(); setStatus("設定を削除しました");
+    const pending = Object.keys(getPending()).length;
+    if (pending && !confirm(`未送信の編集が ${pending} 件あります。設定と一緒に消しますか？`)) return;
+    localStorage.removeItem(CFG_KEY); localStorage.removeItem(PENDING_KEY); fillCfg();
+    cards = []; edits = {}; render(); setStatus("設定を削除しました");
   });
   $("btn-sync").addEventListener("click", sync);
   $("q").addEventListener("input", render);
   $("sort").addEventListener("change", render);
+  $("tag-filter").addEventListener("change", render);
 
   render();
   if (cfgOk(getCfg())) sync();
